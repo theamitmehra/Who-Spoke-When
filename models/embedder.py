@@ -41,6 +41,7 @@ class EcapaTDNNEmbedder:
         try:
             import shutil
             import speechbrain.utils.fetching as _fetching
+            from speechbrain.utils.fetching import LocalStrategy
 
             def _patched_link(src, dst, local_strategy):
                 from pathlib import Path as _Path
@@ -59,26 +60,17 @@ class EcapaTDNNEmbedder:
 
             savedir = "/tmp/model_cache/ecapa_tdnn"
             os.makedirs(savedir, exist_ok=True)
+            logger.info(f"Savedir: {savedir}, exists: {os.path.exists(savedir)}")
 
             self._model = EncoderClassifier.from_hparams(
                 source=self.MODEL_SOURCE,
                 savedir=savedir,
                 run_opts={"device": self.device},
                 huggingface_cache_dir="/tmp/hf_cache",
+                local_strategy=LocalStrategy.COPY,
             )
             self._model.eval()
             logger.success("ECAPA-TDNN model loaded successfully.")
-        except TypeError as e:
-            # huggingface_cache_dir not supported in this version, try without
-            from speechbrain.inference.classifiers import EncoderClassifier
-            savedir = "/tmp/model_cache/ecapa_tdnn"
-            self._model = EncoderClassifier.from_hparams(
-                source=self.MODEL_SOURCE,
-                savedir=savedir,
-                run_opts={"device": self.device},
-            )
-            self._model.eval()
-            logger.success("ECAPA-TDNN model loaded (fallback).")
         except ImportError:
             raise ImportError("SpeechBrain not installed.")
         
