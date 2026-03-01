@@ -39,37 +39,49 @@ class EcapaTDNNEmbedder:
             return
 
         try:
+            import shutil
             import speechbrain.utils.fetching as _fetching
-            import shutil as _shutil
-            from pathlib import Path as _Path
 
             def _patched_link(src, dst, local_strategy):
+                from pathlib import Path as _Path
                 dst = _Path(dst)
                 src = _Path(src)
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 if dst.exists() or dst.is_symlink():
                     dst.unlink()
-                _shutil.copy2(str(src), str(dst))
+                shutil.copy2(str(src), str(dst))
 
             _fetching.link_with_strategy = _patched_link
 
             from speechbrain.inference.classifiers import EncoderClassifier
+
             logger.info(f"Loading ECAPA-TDNN from {self.MODEL_SOURCE}...")
 
-            savedir = str(self.cache_dir / "ecapa_tdnn")
-            import os
+            savedir = "/tmp/model_cache/ecapa_tdnn"
             os.makedirs(savedir, exist_ok=True)
 
             self._model = EncoderClassifier.from_hparams(
                 source=self.MODEL_SOURCE,
                 savedir=savedir,
                 run_opts={"device": self.device},
+                huggingface_cache_dir="/tmp/hf_cache",
             )
             self._model.eval()
             logger.success("ECAPA-TDNN model loaded successfully.")
+        except TypeError as e:
+            # huggingface_cache_dir not supported in this version, try without
+            from speechbrain.inference.classifiers import EncoderClassifier
+            savedir = "/tmp/model_cache/ecapa_tdnn"
+            self._model = EncoderClassifier.from_hparams(
+                source=self.MODEL_SOURCE,
+                savedir=savedir,
+                run_opts={"device": self.device},
+            )
+            self._model.eval()
+            logger.success("ECAPA-TDNN model loaded (fallback).")
         except ImportError:
-            raise ImportError("SpeechBrain not installed. Run: pip install speechbrain")
-
+            raise ImportError("SpeechBrain not installed.")
+        
     def preprocess_audio(
         self, audio: Union[np.ndarray, torch.Tensor], sample_rate: int
     ) -> torch.Tensor:
