@@ -254,6 +254,15 @@ async def serve_ui():
         return HTMLResponse(ui_path.read_text())
     return HTMLResponse("<h1>Speaker Diarization API</h1><p><a href='/docs'>API Docs →</a></p>")
 
+@app.get("/debug", tags=["System"])
+async def debug():
+    import speechbrain
+    import os
+    return {
+        "speechbrain_version": speechbrain.__version__,
+        "tmp_writable": os.access("/tmp", os.W_OK),
+        "cache_exists": os.path.exists("/tmp/model_cache"),
+    }
 
 static_dir = Path("static")
 if static_dir.exists():
