@@ -73,12 +73,14 @@ def get_pipeline():
     global _pipeline
     if _pipeline is None:
         from app.pipeline import DiarizationPipeline
+        import os
+        cache_dir = os.getenv("CACHE_DIR", "/tmp/model_cache")
         _pipeline = DiarizationPipeline(
             device="auto",
             use_pyannote_vad=True,
             hf_token=os.getenv("HF_TOKEN"),
             max_speakers=10,
-            cache_dir="./model_cache",
+            cache_dir=cache_dir,
         )
     return _pipeline
 

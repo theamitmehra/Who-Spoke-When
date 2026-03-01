@@ -22,7 +22,7 @@ class EcapaTDNNEmbedder:
     SAMPLE_RATE = 16000
     EMBEDDING_DIM = 192
 
-    def __init__(self, device: str = "auto", cache_dir: str = "./model_cache"):
+    def __init__(self, device: str = "auto", cache_dir: str = "/tmp/model_cache"):
         self.device = self._resolve_device(device)
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
