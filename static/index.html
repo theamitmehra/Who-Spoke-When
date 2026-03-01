@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Speaker Diarization System</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@300;400;600;700&display=swap');
+
+    :root {
+      --bg: #090c10;
+      --surface: #0f1318;
+      --surface2: #151b23;
+      --border: #1e2730;
+      --accent: #00d4ff;
+      --accent2: #7c3aed;
+      --green: #22d3a0;
+      --yellow: #f59e0b;
+      --red: #ef4444;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --font-mono: 'JetBrains Mono', monospace;
+      --font-sans: 'Space Grotesk', sans-serif;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Grid bg */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .container {
+      position: relative;
+      z-index: 1;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 3rem;
+    }
+
+    .badge {
+      display: inline-block;
+      background: rgba(0, 212, 255, 0.1);
+      border: 1px solid rgba(0, 212, 255, 0.3);
+      color: var(--accent);
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.15em;
+      padding: 4px 12px;
+      border-radius: 100px;
+      margin-bottom: 1rem;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #fff 30%, var(--accent));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      line-height: 1.15;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 1rem;
+      margin-top: 0.75rem;
+      font-weight: 300;
+    }
+
+    /* Cards */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .card-title {
+      font-size: 0.8rem;
+      font-family: var(--font-mono);
+      letter-spacing: 0.12em;
+      color: var(--accent);
+      text-transform: uppercase;
+      margin-bottom: 1.2rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-title::before {
+      content: '▸';
+      font-size: 0.9rem;
+    }
+
+    /* Upload zone */
+    .upload-zone {
+      border: 2px dashed var(--border);
+      border-radius: 10px;
+      padding: 2.5rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.25s;
+      position: relative;
+    }
+
+    .upload-zone:hover, .upload-zone.drag-over {
+      border-color: var(--accent);
+      background: rgba(0, 212, 255, 0.04);
+    }
+
+    .upload-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .upload-icon {
+      font-size: 2.5rem;
+      margin-bottom: 0.75rem;
+      opacity: 0.6;
+    }
+
+    .upload-text {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .upload-text strong {
+      color: var(--accent);
+    }
+
+    /* Controls */
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 1rem;
+      margin-top: 1rem;
+      align-items: end;
+    }
+
+    .field label {
+      display: block;
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      color: var(--muted);
+      margin-bottom: 6px;
+      letter-spacing: 0.08em;
+    }
+
+    .field input, .field select {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      padding: 10px 12px;
+      border-radius: 8px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .field input:focus, .field select:focus {
+      border-color: var(--accent);
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #000;
+      font-family: var(--font-sans);
+      font-weight: 700;
+      font-size: 0.9rem;
+      border: none;
+      padding: 10px 24px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+
+    .btn-primary:hover { filter: brightness(1.1); transform: translateY(-1px); }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+    /* Progress */
+    .progress-bar {
+      height: 4px;
+      background: var(--border);
+      border-radius: 99px;
+      overflow: hidden;
+      margin-top: 1rem;
+      display: none;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      width: 0%;
+      transition: width 0.4s;
+      animation: progress-pulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes progress-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    /* Stats row */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .stat {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.2rem;
+    }
+
+    .stat-val {
+      font-family: var(--font-mono);
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .stat-label {
+      font-size: 0.73rem;
+      color: var(--muted);
+      margin-top: 4px;
+      letter-spacing: 0.06em;
+    }
+
+    /* Timeline */
+    #timeline-container {
+      margin-bottom: 1rem;
+    }
+
+    .timeline-ruler {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      color: var(--muted);
+      margin-bottom: 6px;
+      padding: 0 2px;
+    }
+
+    .timeline-track {
+      height: 48px;
+      background: var(--surface2);
+      border-radius: 8px;
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      margin-bottom: 8px;
+    }
+
+    .track-label {
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      color: var(--muted);
+      position: absolute;
+      left: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 2;
+      text-shadow: 0 0 8px var(--bg);
+    }
+
+    .timeline-segment {
+      position: absolute;
+      height: 100%;
+      border-radius: 4px;
+      opacity: 0.9;
+      cursor: pointer;
+      transition: opacity 0.15s, filter 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      color: rgba(0,0,0,0.85);
+      font-weight: 700;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    .timeline-segment:hover {
+      opacity: 1;
+      filter: brightness(1.15);
+      z-index: 5;
+    }
+
+    /* Segment table */
+    .seg-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+    }
+
+    .seg-table th {
+      text-align: left;
+      padding: 8px 12px;
+      font-size: 0.7rem;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .seg-table td {
+      padding: 9px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      vertical-align: middle;
+    }
+
+    .seg-table tr:last-child td { border-bottom: none; }
+    .seg-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+    .speaker-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 8px;
+    }
+
+    /* Log */
+    #log {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--muted);
+      background: var(--surface2);
+      border-radius: 8px;
+      padding: 1rem;
+      max-height: 160px;
+      overflow-y: auto;
+      line-height: 1.7;
+    }
+
+    .log-info   { color: var(--accent); }
+    .log-success{ color: var(--green); }
+    .log-error  { color: var(--red); }
+    .log-warn   { color: var(--yellow); }
+
+    .hidden { display: none !important; }
+
+    @media (max-width: 640px) {
+      .controls { grid-template-columns: 1fr; }
+      .stats-row { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="badge">ECAPA-TDNN + AHC · FASTAPI</div>
+    <h1>Speaker Diarization System</h1>
+    <p class="subtitle">Who spoke when — multi-speaker audio segmentation & labeling</p>
+  </header>
+
+  <!-- Upload Card -->
+  <div class="card">
+    <div class="card-title">Audio Input</div>
+    <div class="upload-zone" id="dropzone">
+      <input type="file" id="audioFile" accept=".wav,.mp3,.flac,.ogg,.m4a,.webm" />
+      <div class="upload-icon">🎙</div>
+      <div class="upload-text"><strong>Drop audio file</strong> or click to browse</div>
+      <div class="upload-text" style="margin-top:4px;font-size:0.78rem;" id="filename-display">WAV · MP3 · FLAC · OGG · M4A</div>
+    </div>
+
+    <div class="controls">
+      <div class="field">
+        <label>API ENDPOINT</label>
+        <input type="text" id="apiUrl" value="http://localhost:8000/diarize" />
+      </div>
+      <div class="field">
+        <label>SPEAKERS (blank = auto)</label>
+        <input type="number" id="numSpeakers" min="1" max="20" placeholder="auto-detect" />
+      </div>
+      <button class="btn-primary" id="runBtn" onclick="runDiarization()" disabled>
+        ▶ Run
+      </button>
+    </div>
+
+    <div class="progress-bar" id="progressBar">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+  </div>
+
+  <!-- Results (hidden until run) -->
+  <div id="results" class="hidden">
+
+    <div class="stats-row" id="statsRow"></div>
+
+    <!-- Timeline -->
+    <div class="card">
+      <div class="card-title">Speaker Timeline</div>
+      <div class="timeline-ruler" id="timelineRuler"></div>
+      <div id="timelineTracks"></div>
+    </div>
+
+    <!-- Segment Table -->
+    <div class="card">
+      <div class="card-title">Segments</div>
+      <div style="overflow-x:auto;">
+        <table class="seg-table">
+          <thead>
+            <tr>
+              <th>#</th><th>SPEAKER</th><th>START</th><th>END</th><th>DURATION</th>
+            </tr>
+          </thead>
+          <tbody id="segTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Log -->
+  <div class="card">
+    <div class="card-title">Log</div>
+    <div id="log"><span class="log-info">// Ready. Upload an audio file to begin.</span></div>
+  </div>
+
+</div>
+
+<script>
+const SPEAKER_COLORS = [
+  '#00d4ff','#7c3aed','#22d3a0','#f59e0b',
+  '#ec4899','#3b82f6','#84cc16','#f97316',
+  '#06b6d4','#a855f7',
+];
+
+let selectedFile = null;
+
+// ── File Handling ──────────────────────────────────────────────────────────
+document.getElementById('audioFile').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  selectedFile = file;
+  document.getElementById('filename-display').textContent = `📁 ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`;
+  document.getElementById('runBtn').disabled = false;
+  log(`File selected: ${file.name}`, 'info');
+});
+
+// Drag & Drop
+const dz = document.getElementById('dropzone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+dz.addEventListener('drop', e => {
+  e.preventDefault();
+  dz.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) {
+    document.getElementById('audioFile').files = e.dataTransfer.files;
+    document.getElementById('audioFile').dispatchEvent(new Event('change'));
+  }
+});
+
+// ── Log ────────────────────────────────────────────────────────────────────
+function log(msg, type = '') {
+  const el = document.getElementById('log');
+  const cls = type ? `log-${type}` : '';
+  const ts = new Date().toLocaleTimeString('en', { hour12: false });
+  el.innerHTML += `<br><span class="${cls}">[${ts}] ${msg}</span>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+// ── Run Diarization ────────────────────────────────────────────────────────
+async function runDiarization() {
+  if (!selectedFile) return;
+
+  const btn = document.getElementById('runBtn');
+  const pb = document.getElementById('progressBar');
+  const pf = document.getElementById('progressFill');
+
+  btn.disabled = true;
+  pb.style.display = 'block';
+  pf.style.width = '20%';
+  document.getElementById('results').classList.add('hidden');
+  log('Uploading audio and running diarization...', 'info');
+
+  const formData = new FormData();
+  formData.append('file', selectedFile);
+  const ns = document.getElementById('numSpeakers').value;
+  if (ns) formData.append('num_speakers', ns);
+
+  const url = document.getElementById('apiUrl').value;
+
+  try {
+    pf.style.width = '50%';
+    const resp = await fetch(url, { method: 'POST', body: formData });
+
+    pf.style.width = '90%';
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+
+    const data = await resp.json();
+    pf.style.width = '100%';
+
+    log(`Done — ${data.num_speakers} speaker(s), ${data.segments.length} segments, ${data.processing_time.toFixed(2)}s`, 'success');
+    renderResults(data);
+
+  } catch (e) {
+    log(`Error: ${e.message}`, 'error');
+  } finally {
+    setTimeout(() => { pb.style.display = 'none'; pf.style.width = '0%'; }, 800);
+    btn.disabled = false;
+  }
+}
+
+// ── Render Results ─────────────────────────────────────────────────────────
+function renderResults(data) {
+  document.getElementById('results').classList.remove('hidden');
+
+  // Stats
+  const stats = [
+    { val: data.num_speakers, label: 'SPEAKERS' },
+    { val: data.segments.length, label: 'SEGMENTS' },
+    { val: data.audio_duration.toFixed(1) + 's', label: 'DURATION' },
+    { val: data.processing_time.toFixed(2) + 's', label: 'PROC TIME' },
+  ];
+  document.getElementById('statsRow').innerHTML = stats.map(s =>
+    `<div class="stat">
+      <div class="stat-val">${s.val}</div>
+      <div class="stat-label">${s.label}</div>
+    </div>`
+  ).join('');
+
+  // Build speaker→color map
+  const colorMap = {};
+  data.speakers.forEach((sp, i) => {
+    colorMap[sp] = SPEAKER_COLORS[i % SPEAKER_COLORS.length];
+  });
+
+  // Timeline
+  const duration = data.audio_duration;
+  const ruler = document.getElementById('timelineRuler');
+  const ticks = 8;
+  ruler.innerHTML = Array.from({ length: ticks + 1 }, (_, i) =>
+    `<span>${fmtTime(duration * i / ticks)}</span>`
+  ).join('');
+
+  // One track per speaker
+  const tracksEl = document.getElementById('timelineTracks');
+  tracksEl.innerHTML = '';
+
+  data.speakers.forEach(sp => {
+    const track = document.createElement('div');
+    track.className = 'timeline-track';
+    track.innerHTML = `<span class="track-label">${sp}</span>`;
+
+    const spSegs = data.segments.filter(s => s.speaker === sp);
+    spSegs.forEach(seg => {
+      const left = (seg.start / duration) * 100;
+      const width = (seg.duration / duration) * 100;
+      const seg_el = document.createElement('div');
+      seg_el.className = 'timeline-segment';
+      seg_el.style.cssText = `left:${left}%;width:${Math.max(width, 0.3)}%;background:${colorMap[sp]};`;
+      seg_el.title = `${sp}: ${seg.start.toFixed(2)}s – ${seg.end.toFixed(2)}s`;
+      if (width > 3) seg_el.textContent = fmtTime(seg.duration);
+      track.appendChild(seg_el);
+    });
+
+    tracksEl.appendChild(track);
+  });
+
+  // Segment table
+  const tbody = document.getElementById('segTableBody');
+  tbody.innerHTML = data.segments.map((seg, i) =>
+    `<tr>
+      <td style="color:var(--muted)">${i + 1}</td>
+      <td>
+        <span class="speaker-dot" style="background:${colorMap[seg.speaker]}"></span>
+        ${seg.speaker}
+      </td>
+      <td>${seg.start.toFixed(3)}</td>
+      <td>${seg.end.toFixed(3)}</td>
+      <td>${seg.duration.toFixed(3)}s</td>
+    </tr>`
+  ).join('');
+}
+
+function fmtTime(sec) {
+  const m = Math.floor(sec / 60);
+  const s = (sec % 60).toFixed(1).padStart(4, '0');
+  return `${m}:${s}`;
+}
+</script>
+</body>
+</html>

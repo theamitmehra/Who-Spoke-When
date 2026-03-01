@@ -1,0 +1,11 @@
+.env
+model_cache/
+wires/
+.wires/
+__pycache__/
+*.pyc
+*.wav
+*.mp3
+*.flac
+.venv/
+venv/
