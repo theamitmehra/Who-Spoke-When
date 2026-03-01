@@ -258,11 +258,16 @@ async def serve_ui():
 async def debug():
     import speechbrain
     import os
+    import inspect
+    from speechbrain.inference.classifiers import EncoderClassifier
+    sig = str(inspect.signature(EncoderClassifier.from_hparams))
     return {
         "speechbrain_version": speechbrain.__version__,
         "tmp_writable": os.access("/tmp", os.W_OK),
         "cache_exists": os.path.exists("/tmp/model_cache"),
+        "from_hparams_signature": sig,
     }
+
 
 static_dir = Path("static")
 if static_dir.exists():
