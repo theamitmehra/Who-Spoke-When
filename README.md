@@ -1,3 +1,13 @@
+---
+title: Who Spoke When
+emoji: 🎙️
+colorFrom: blue
+colorTo: purple
+sdk: docker
+app_file: app/main.py
+pinned: false
+---
+
 # 🎙 Speaker Diarization System
 ### *Who Spoke When — Multi-Speaker Audio Segmentation*
 
