@@ -2,7 +2,7 @@
 title: Who Spoke When
 emoji: '🎙️'
 colorFrom: blue
-colorTo: cyan
+colorTo: indigo
 sdk: docker
 app_file: app/main.py
 pinned: false
@@ -206,3 +206,4 @@ This is usually model download/cache/auth mismatch. Confirm `HF_TOKEN`, cache pa
 
 ## License
 Add your preferred license file (`LICENSE`) if this project is public.
+
