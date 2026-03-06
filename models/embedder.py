@@ -1,14 +1,16 @@
-"""
+﻿"""
 Speaker Embedding Extraction using ECAPA-TDNN architecture via SpeechBrain.
 Handles audio preprocessing, feature extraction, and L2-normalized embeddings.
 """
 
-import os
-import torch
-import torchaudio
-import numpy as np
+import inspect
+import shutil
 from pathlib import Path
 from typing import Union, List, Tuple
+
+import numpy as np
+import torch
+import torchaudio
 from loguru import logger
 
 
@@ -22,7 +24,7 @@ class EcapaTDNNEmbedder:
     SAMPLE_RATE = 16000
     EMBEDDING_DIM = 192
 
-    def __init__(self, device: str = "auto", cache_dir: str = "/tmp/model_cache"):
+    def __init__(self, device: str = "auto", cache_dir: str = "./model_cache"):
         self.device = self._resolve_device(device)
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -39,41 +41,46 @@ class EcapaTDNNEmbedder:
             return
 
         try:
-            import shutil
             import speechbrain.utils.fetching as _fetching
             from speechbrain.utils.fetching import LocalStrategy
+            from speechbrain.inference.classifiers import EncoderClassifier
 
             def _patched_link(src, dst, local_strategy):
-                from pathlib import Path as _Path
-                dst = _Path(dst)
-                src = _Path(src)
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                if dst.exists() or dst.is_symlink():
-                    dst.unlink()
-                shutil.copy2(str(src), str(dst))
+                dst_path = Path(dst)
+                src_path = Path(src)
+                dst_path.parent.mkdir(parents=True, exist_ok=True)
+                if dst_path.exists() or dst_path.is_symlink():
+                    dst_path.unlink()
+                shutil.copy2(str(src_path), str(dst_path))
 
             _fetching.link_with_strategy = _patched_link
 
-            from speechbrain.inference.classifiers import EncoderClassifier
+            savedir = self.cache_dir / "ecapa_tdnn"
+            hf_cache = self.cache_dir / "hf_cache"
+            savedir.mkdir(parents=True, exist_ok=True)
+            hf_cache.mkdir(parents=True, exist_ok=True)
 
             logger.info(f"Loading ECAPA-TDNN from {self.MODEL_SOURCE}...")
+            logger.info(f"Savedir: {savedir}, exists: {savedir.exists()}")
 
-            savedir = "/tmp/model_cache/ecapa_tdnn"
-            os.makedirs(savedir, exist_ok=True)
-            logger.info(f"Savedir: {savedir}, exists: {os.path.exists(savedir)}")
+            kwargs = {
+                "source": self.MODEL_SOURCE,
+                "savedir": str(savedir),
+                "run_opts": {"device": self.device},
+            }
 
-            self._model = EncoderClassifier.from_hparams(
-                source=self.MODEL_SOURCE,
-                savedir=savedir,
-                run_opts={"device": self.device},
-                huggingface_cache_dir="/tmp/hf_cache",
-                local_strategy=LocalStrategy.COPY,
-            )
+            sig = inspect.signature(EncoderClassifier.from_hparams)
+            if "huggingface_cache_dir" in sig.parameters:
+                kwargs["huggingface_cache_dir"] = str(hf_cache)
+            if "local_strategy" in sig.parameters:
+                kwargs["local_strategy"] = LocalStrategy.COPY
+
+            self._model = EncoderClassifier.from_hparams(**kwargs)
             self._model.eval()
             logger.success("ECAPA-TDNN model loaded successfully.")
-        except ImportError:
-            raise ImportError("SpeechBrain not installed.")
-        
+        except ImportError as exc:
+            raise ImportError("SpeechBrain not installed.") from exc
+
     def preprocess_audio(
         self, audio: Union[np.ndarray, torch.Tensor], sample_rate: int
     ) -> torch.Tensor:

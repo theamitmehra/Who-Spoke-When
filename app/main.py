@@ -1,9 +1,5 @@
-"""
-Speaker Diarization API - FastAPI Application
-"""
+﻿"""Speaker Diarization API - FastAPI Application."""
 
-import io
-import time
 import asyncio
 import tempfile
 import traceback
@@ -19,12 +15,9 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from loguru import logger
 
-# ---------------------------------------------------------------------------
-# Schemas
-# ---------------------------------------------------------------------------
 
 class SegmentOut(BaseModel):
     start: float
@@ -49,13 +42,9 @@ class HealthResponse(BaseModel):
     version: str = "1.0.0"
 
 
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
-
 app = FastAPI(
     title="Speaker Diarization API",
-    description="Who Spoke When — Speaker diarization using ECAPA-TDNN + AHC Clustering",
+    description="Who Spoke When - Speaker diarization using ECAPA-TDNN + AHC Clustering",
     version="1.0.0",
 )
 
@@ -69,12 +58,16 @@ app.add_middleware(
 
 _pipeline = None
 
+
 def get_pipeline():
     global _pipeline
     if _pipeline is None:
         from app.pipeline import DiarizationPipeline
-        import os
-        cache_dir = os.getenv("CACHE_DIR", "/tmp/model_cache")
+
+        cache_dir = os.getenv(
+            "CACHE_DIR",
+            str(Path(tempfile.gettempdir()) / "model_cache"),
+        )
         _pipeline = DiarizationPipeline(
             device="auto",
             use_pyannote_vad=True,
@@ -84,10 +77,6 @@ def get_pipeline():
         )
     return _pipeline
 
-
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 async def health_check():
@@ -136,6 +125,7 @@ async def diarize_from_url(
 ):
     """Diarize audio from a URL."""
     import httpx
+
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.get(audio_url)
@@ -169,6 +159,7 @@ async def stream_diarization(websocket: WebSocket):
     """Real-time streaming diarization via WebSocket."""
     await websocket.accept()
     import numpy as np
+
     audio_buffer = bytearray()
     sample_rate = 16000
     num_speakers = None
@@ -179,10 +170,12 @@ async def stream_diarization(websocket: WebSocket):
         sample_rate = config_msg.get("sample_rate", 16000)
         num_speakers = config_msg.get("num_speakers", None)
 
-        await websocket.send_json({
-            "type": "progress",
-            "data": {"message": "Config received. Send audio chunks.", "chunks_received": 0},
-        })
+        await websocket.send_json(
+            {
+                "type": "progress",
+                "data": {"message": "Config received. Send audio chunks.", "chunks_received": 0},
+            }
+        )
 
         while True:
             try:
@@ -194,12 +187,18 @@ async def stream_diarization(websocket: WebSocket):
             if "bytes" in msg:
                 audio_buffer.extend(msg["bytes"])
                 chunk_count += 1
-                await websocket.send_json({
-                    "type": "progress",
-                    "data": {"message": f"Received chunk {chunk_count}", "chunks_received": chunk_count},
-                })
+                await websocket.send_json(
+                    {
+                        "type": "progress",
+                        "data": {
+                            "message": f"Received chunk {chunk_count}",
+                            "chunks_received": chunk_count,
+                        },
+                    }
+                )
             elif "text" in msg:
                 import json
+
                 data = json.loads(msg["text"])
                 if data.get("type") == "eof":
                     break
@@ -208,14 +207,17 @@ async def stream_diarization(websocket: WebSocket):
             await websocket.send_json({"type": "error", "data": {"message": "No audio received"}})
             return
 
-        import torch
-        audio_np = np.frombuffer(audio_buffer, dtype=np.float32).copy()
-        audio_tensor = torch.from_numpy(audio_np)
+        import torch as torch_local
 
-        await websocket.send_json({
-            "type": "progress",
-            "data": {"message": "Running diarization pipeline..."},
-        })
+        audio_np = np.frombuffer(audio_buffer, dtype=np.float32).copy()
+        audio_tensor = torch_local.from_numpy(audio_np)
+
+        await websocket.send_json(
+            {
+                "type": "progress",
+                "data": {"message": "Running diarization pipeline..."},
+            }
+        )
 
         loop = asyncio.get_event_loop()
         pipeline = get_pipeline()
@@ -227,15 +229,17 @@ async def stream_diarization(websocket: WebSocket):
         for seg in result.segments:
             await websocket.send_json({"type": "segment", "data": seg.to_dict()})
 
-        await websocket.send_json({
-            "type": "done",
-            "data": {
-                "num_speakers": result.num_speakers,
-                "total_segments": len(result.segments),
-                "audio_duration": result.audio_duration,
-                "processing_time": result.processing_time,
-            },
-        })
+        await websocket.send_json(
+            {
+                "type": "done",
+                "data": {
+                    "num_speakers": result.num_speakers,
+                    "total_segments": len(result.segments),
+                    "audio_duration": result.audio_duration,
+                    "processing_time": result.processing_time,
+                },
+            }
+        )
 
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
@@ -249,26 +253,33 @@ async def stream_diarization(websocket: WebSocket):
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def serve_ui():
-    ui_path = Path("static/index.html")
+    ui_path = Path(__file__).resolve().parent.parent / "static" / "index.html"
     if ui_path.exists():
-        return HTMLResponse(ui_path.read_text())
-    return HTMLResponse("<h1>Speaker Diarization API</h1><p><a href='/docs'>API Docs →</a></p>")
+        return HTMLResponse(ui_path.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>Speaker Diarization API</h1><p><a href='/docs'>API Docs</a></p>")
+
 
 @app.get("/debug", tags=["System"])
 async def debug():
-    import speechbrain
-    import os
     import inspect
+    import speechbrain
     from speechbrain.inference.classifiers import EncoderClassifier
+
+    cache_dir = os.getenv(
+        "CACHE_DIR",
+        str(Path(tempfile.gettempdir()) / "model_cache"),
+    )
     sig = str(inspect.signature(EncoderClassifier.from_hparams))
     return {
         "speechbrain_version": speechbrain.__version__,
-        "tmp_writable": os.access("/tmp", os.W_OK),
-        "cache_exists": os.path.exists("/tmp/model_cache"),
+        "temp_dir": tempfile.gettempdir(),
+        "temp_writable": os.access(tempfile.gettempdir(), os.W_OK),
+        "cache_dir": cache_dir,
+        "cache_exists": os.path.exists(cache_dir),
         "from_hparams_signature": sig,
     }
 
 
-static_dir = Path("static")
+static_dir = Path(__file__).resolve().parent.parent / "static"
 if static_dir.exists():
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
