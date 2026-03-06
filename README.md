@@ -1,4 +1,4 @@
-﻿---
+---
 title: Who Spoke When
 emoji: '🎙️'
 colorFrom: blue
