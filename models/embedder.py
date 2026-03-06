@@ -1,10 +1,9 @@
-﻿"""
+"""
 Speaker Embedding Extraction using ECAPA-TDNN architecture via SpeechBrain.
 Handles audio preprocessing, feature extraction, and L2-normalized embeddings.
 """
 
 import inspect
-import shutil
 from pathlib import Path
 from typing import Union, List, Tuple
 
@@ -36,24 +35,36 @@ class EcapaTDNNEmbedder:
             return "cuda" if torch.cuda.is_available() else "cpu"
         return device
 
+    def _build_hparams_kwargs(self, encoder_cls, savedir: Path, hf_cache: Path) -> dict:
+        kwargs = {
+            "source": self.MODEL_SOURCE,
+            "savedir": str(savedir),
+            "run_opts": {"device": self.device},
+        }
+
+        sig = inspect.signature(encoder_cls.from_hparams)
+        if "huggingface_cache_dir" in sig.parameters:
+            kwargs["huggingface_cache_dir"] = str(hf_cache)
+        if "local_strategy" in sig.parameters:
+            try:
+                from speechbrain.utils.fetching import LocalStrategy
+
+                kwargs["local_strategy"] = LocalStrategy.COPY
+            except Exception:
+                pass
+
+        return kwargs
+
     def _load_model(self):
         if self._model is not None:
             return
 
         try:
-            import speechbrain.utils.fetching as _fetching
-            from speechbrain.utils.fetching import LocalStrategy
-            from speechbrain.inference.classifiers import EncoderClassifier
-
-            def _patched_link(src, dst, local_strategy):
-                dst_path = Path(dst)
-                src_path = Path(src)
-                dst_path.parent.mkdir(parents=True, exist_ok=True)
-                if dst_path.exists() or dst_path.is_symlink():
-                    dst_path.unlink()
-                shutil.copy2(str(src_path), str(dst_path))
-
-            _fetching.link_with_strategy = _patched_link
+            try:
+                from speechbrain.inference.classifiers import EncoderClassifier
+            except ImportError:
+                # Backward compatibility with older SpeechBrain versions.
+                from speechbrain.pretrained import EncoderClassifier
 
             savedir = self.cache_dir / "ecapa_tdnn"
             hf_cache = self.cache_dir / "hf_cache"
@@ -63,23 +74,28 @@ class EcapaTDNNEmbedder:
             logger.info(f"Loading ECAPA-TDNN from {self.MODEL_SOURCE}...")
             logger.info(f"Savedir: {savedir}, exists: {savedir.exists()}")
 
-            kwargs = {
-                "source": self.MODEL_SOURCE,
-                "savedir": str(savedir),
-                "run_opts": {"device": self.device},
-            }
+            kwargs = self._build_hparams_kwargs(EncoderClassifier, savedir, hf_cache)
+            model = EncoderClassifier.from_hparams(**kwargs)
 
-            sig = inspect.signature(EncoderClassifier.from_hparams)
-            if "huggingface_cache_dir" in sig.parameters:
-                kwargs["huggingface_cache_dir"] = str(hf_cache)
-            if "local_strategy" in sig.parameters:
-                kwargs["local_strategy"] = LocalStrategy.COPY
+            if model is None:
+                # Some SpeechBrain/HF hub combinations ignore optional kwargs.
+                logger.warning("ECAPA load returned None; retrying with minimal from_hparams kwargs.")
+                model = EncoderClassifier.from_hparams(
+                    source=self.MODEL_SOURCE,
+                    savedir=str(savedir),
+                    run_opts={"device": self.device},
+                )
 
-            self._model = EncoderClassifier.from_hparams(**kwargs)
+            if model is None:
+                raise RuntimeError("EncoderClassifier.from_hparams returned None")
+
+            self._model = model
             self._model.eval()
             logger.success("ECAPA-TDNN model loaded successfully.")
         except ImportError as exc:
             raise ImportError("SpeechBrain not installed.") from exc
+        except Exception as exc:
+            raise RuntimeError(f"Failed to load ECAPA-TDNN model: {exc}") from exc
 
     def preprocess_audio(
         self, audio: Union[np.ndarray, torch.Tensor], sample_rate: int
@@ -157,3 +173,4 @@ class EcapaTDNNEmbedder:
             return np.empty((0, self.EMBEDDING_DIM)), []
 
         return np.stack(embeddings), valid_segments
+

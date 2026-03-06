@@ -1,6 +1,6 @@
 """
 Speaker Diarization Pipeline
-Combines: Voice Activity Detection → Segmentation → ECAPA-TDNN Embeddings → AHC Clustering
+Combines: Voice Activity Detection -> Segmentation -> ECAPA-TDNN Embeddings -> AHC Clustering
 """
 
 import torch
@@ -97,6 +97,16 @@ class DiarizationPipeline:
             return "cuda" if torch.cuda.is_available() else "cpu"
         return device
 
+    def _to_mono_1d(self, audio: torch.Tensor) -> torch.Tensor:
+        """Convert waveform to a mono 1D tensor for duration and preprocessing."""
+        if audio.dim() == 1:
+            return audio
+        if audio.dim() >= 2:
+            if audio.shape[0] == 1:
+                return audio[0]
+            return audio.mean(dim=0)
+        return audio.reshape(-1)
+
     def _load_vad(self):
         if self._vad_pipeline is not None:
             return
@@ -120,13 +130,13 @@ class DiarizationPipeline:
         frame_samples = int(frame_duration * self.SAMPLE_RATE)
         audio_np = audio.numpy()
         frames = [
-            audio_np[i : i + frame_samples]
+            audio_np[i: i + frame_samples]
             for i in range(0, len(audio_np) - frame_samples, frame_samples)
         ]
 
         energies_db = []
-        for f in frames:
-            rms = np.sqrt(np.mean(f ** 2) + 1e-10)
+        for frame in frames:
+            rms = np.sqrt(np.mean(frame ** 2) + 1e-10)
             energies_db.append(20 * np.log10(rms))
 
         is_speech = np.array(energies_db) > threshold_db
@@ -198,17 +208,29 @@ class DiarizationPipeline:
     ) -> DiarizationResult:
         """Run full diarization pipeline on audio."""
         import time
+
         t_start = time.time()
 
         if isinstance(audio, (str, Path)):
             waveform, sample_rate = self.load_audio(audio)
-            audio_tensor = waveform.squeeze(0)
+            audio_tensor = self._to_mono_1d(waveform)
         else:
             assert sample_rate is not None, "sample_rate required when passing tensor"
-            audio_tensor = audio.squeeze(0) if audio.dim() > 1 else audio
+            audio_tensor = self._to_mono_1d(audio)
 
-        audio_duration = len(audio_tensor) / sample_rate
+        num_samples = int(audio_tensor.numel())
+        audio_duration = num_samples / float(sample_rate)
         logger.info(f"Processing {audio_duration:.1f}s audio at {sample_rate}Hz")
+
+        if num_samples == 0:
+            logger.warning("Received empty audio input.")
+            return DiarizationResult(
+                segments=[],
+                num_speakers=0,
+                audio_duration=0.0,
+                processing_time=time.time() - t_start,
+                sample_rate=sample_rate,
+            )
 
         processed = self.embedder.preprocess_audio(audio_tensor, sample_rate)
 
@@ -216,7 +238,8 @@ class DiarizationPipeline:
         if not speech_regions:
             logger.warning("No speech detected in audio.")
             return DiarizationResult(
-                segments=[], num_speakers=0,
+                segments=[],
+                num_speakers=0,
                 audio_duration=audio_duration,
                 processing_time=time.time() - t_start,
                 sample_rate=sample_rate,
@@ -232,7 +255,8 @@ class DiarizationPipeline:
         if len(embeddings) == 0:
             logger.warning("No valid embeddings extracted.")
             return DiarizationResult(
-                segments=[], num_speakers=0,
+                segments=[],
+                num_speakers=0,
                 audio_duration=audio_duration,
                 processing_time=time.time() - t_start,
                 sample_rate=sample_rate,
@@ -245,11 +269,7 @@ class DiarizationPipeline:
 
         speaker_names = {i: f"SPEAKER_{i:02d}" for i in range(self.max_speakers)}
         segments = [
-            DiarizationSegment(
-                start=start,
-                end=end,
-                speaker=speaker_names[spk_id],
-            )
+            DiarizationSegment(start=start, end=end, speaker=speaker_names[spk_id])
             for start, end, spk_id in merged
         ]
 
@@ -268,3 +288,4 @@ class DiarizationPipeline:
             processing_time=processing_time,
             sample_rate=sample_rate,
         )
+
