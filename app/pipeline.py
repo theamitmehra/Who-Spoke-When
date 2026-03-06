@@ -1,14 +1,17 @@
 """
 Speaker Diarization Pipeline
-Combines: Voice Activity Detection -> Segmentation -> ECAPA-TDNN Embeddings -> AHC Clustering
+Combines: pyannote diarization (preferred) -> fallback VAD + ECAPA-TDNN + AHC clustering
 """
 
-import torch
-import torchaudio
-import numpy as np
+import tempfile
+import time
 from pathlib import Path
 from typing import Optional, List, Union, BinaryIO
 from dataclasses import dataclass, field
+
+import numpy as np
+import torch
+import torchaudio
 from loguru import logger
 
 from models.embedder import EcapaTDNNEmbedder
@@ -55,25 +58,19 @@ class DiarizationResult:
 
 
 class DiarizationPipeline:
-    """
-    End-to-end speaker diarization pipeline.
-    1. Audio loading & preprocessing
-    2. Voice Activity Detection (VAD) via pyannote or energy-based fallback
-    3. Sliding-window segmentation of speech regions
-    4. ECAPA-TDNN speaker embedding extraction per segment
-    5. Agglomerative Hierarchical Clustering
-    6. Post-processing: merge consecutive same-speaker segments
-    """
+    """End-to-end speaker diarization with pyannote-first fallback behavior."""
 
     SAMPLE_RATE = 16000
-    WINDOW_DURATION = 1.5
-    WINDOW_STEP = 0.75
-    MIN_SEGMENT_DURATION = 0.5
+    WINDOW_DURATION = 2.0
+    WINDOW_STEP = 1.0
+    MIN_SEGMENT_DURATION = 0.8
 
     def __init__(
         self,
         device: str = "auto",
         use_pyannote_vad: bool = True,
+        use_pyannote_diarization: bool = True,
+        pyannote_diarization_model: str = "pyannote/speaker-diarization-3.1",
         hf_token: Optional[str] = None,
         num_speakers: Optional[int] = None,
         max_speakers: int = 10,
@@ -81,15 +78,18 @@ class DiarizationPipeline:
     ):
         self.device = self._resolve_device(device)
         self.use_pyannote_vad = use_pyannote_vad
+        self.use_pyannote_diarization = use_pyannote_diarization
+        self.pyannote_diarization_model = pyannote_diarization_model
         self.hf_token = hf_token
         self.num_speakers = num_speakers
         self.max_speakers = max_speakers
         self.cache_dir = Path(cache_dir)
 
         self.embedder = EcapaTDNNEmbedder(device=self.device, cache_dir=str(cache_dir))
-        self.clusterer = SpeakerClusterer(max_speakers=max_speakers)
+        self.clusterer = SpeakerClusterer(max_speakers=max_speakers, distance_threshold=0.55)
 
         self._vad_pipeline = None
+        self._full_diar_pipeline = None
         logger.info(f"DiarizationPipeline ready | device={self.device}")
 
     def _resolve_device(self, device: str) -> str:
@@ -98,7 +98,6 @@ class DiarizationPipeline:
         return device
 
     def _to_mono_1d(self, audio: torch.Tensor) -> torch.Tensor:
-        """Convert waveform to a mono 1D tensor for duration and preprocessing."""
         if audio.dim() == 1:
             return audio
         if audio.dim() >= 2:
@@ -107,26 +106,141 @@ class DiarizationPipeline:
             return audio.mean(dim=0)
         return audio.reshape(-1)
 
+    def _load_pyannote_pipeline(self, model_id: str):
+        from pyannote.audio import Pipeline
+
+        try:
+            if self.hf_token:
+                try:
+                    pipeline = Pipeline.from_pretrained(model_id, use_auth_token=self.hf_token)
+                except TypeError:
+                    pipeline = Pipeline.from_pretrained(model_id, token=self.hf_token)
+            else:
+                pipeline = Pipeline.from_pretrained(model_id)
+        except TypeError:
+            pipeline = Pipeline.from_pretrained(model_id)
+
+        if pipeline is None:
+            raise RuntimeError(f"Pipeline.from_pretrained returned None for {model_id}")
+
+        try:
+            pipeline.to(torch.device(self.device))
+        except Exception:
+            pass
+
+        return pipeline
+
+    def _load_full_diarization(self):
+        if self._full_diar_pipeline is not None:
+            return
+        try:
+            logger.info(f"Loading pyannote diarization pipeline: {self.pyannote_diarization_model}")
+            self._full_diar_pipeline = self._load_pyannote_pipeline(self.pyannote_diarization_model)
+            logger.success("Pyannote speaker diarization pipeline loaded.")
+        except Exception as e:
+            logger.warning(f"Could not load pyannote diarization pipeline: {e}.")
+            self._full_diar_pipeline = "unavailable"
+
     def _load_vad(self):
         if self._vad_pipeline is not None:
             return
         try:
-            from pyannote.audio import Pipeline
             logger.info("Loading pyannote VAD pipeline...")
-            self._vad_pipeline = Pipeline.from_pretrained(
-                "pyannote/voice-activity-detection",
-                use_auth_token=self.hf_token,
-            )
-            self._vad_pipeline.to(torch.device(self.device))
+            self._vad_pipeline = self._load_pyannote_pipeline("pyannote/voice-activity-detection")
             logger.success("Pyannote VAD loaded.")
         except Exception as e:
             logger.warning(f"Could not load pyannote VAD: {e}. Falling back to energy-based VAD.")
             self._vad_pipeline = "energy"
 
+    def _merge_named_segments(
+        self, segments: List[DiarizationSegment], gap_tolerance: float = 0.35
+    ) -> List[DiarizationSegment]:
+        if not segments:
+            return []
+
+        merged = [segments[0]]
+        for seg in segments[1:]:
+            last = merged[-1]
+            if seg.speaker == last.speaker and seg.start - last.end <= gap_tolerance:
+                merged[-1] = DiarizationSegment(start=last.start, end=seg.end, speaker=last.speaker)
+            else:
+                merged.append(seg)
+        return merged
+
+    def _run_full_pyannote(
+        self,
+        audio: Union[str, Path, torch.Tensor],
+        sample_rate: int,
+        num_speakers: Optional[int],
+        audio_duration: float,
+        t_start: float,
+    ) -> Optional[DiarizationResult]:
+        if not self.use_pyannote_diarization:
+            return None
+
+        self._load_full_diarization()
+        if self._full_diar_pipeline == "unavailable":
+            return None
+
+        tmp_path = None
+        source = audio
+        try:
+            if not isinstance(audio, (str, Path)):
+                mono = self._to_mono_1d(audio).detach().cpu().float()
+                wav = mono.unsqueeze(0)
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                    tmp_path = tmp.name
+                torchaudio.save(tmp_path, wav, sample_rate)
+                source = tmp_path
+
+            kwargs = {}
+            if num_speakers is not None:
+                kwargs["num_speakers"] = int(num_speakers)
+
+            diar_output = self._full_diar_pipeline(str(source), **kwargs)
+
+            raw_segments = []
+            speaker_map = {}
+            next_id = 0
+            for turn, _, speaker in diar_output.itertracks(yield_label=True):
+                start = float(turn.start)
+                end = float(turn.end)
+                if end - start < 0.2:
+                    continue
+                if speaker not in speaker_map:
+                    speaker_map[speaker] = f"SPEAKER_{next_id:02d}"
+                    next_id += 1
+                raw_segments.append(
+                    DiarizationSegment(start=start, end=end, speaker=speaker_map[speaker])
+                )
+
+            if not raw_segments:
+                return None
+
+            raw_segments.sort(key=lambda s: (s.start, s.end))
+            merged_segments = self._merge_named_segments(raw_segments)
+            num_unique = len(set(s.speaker for s in merged_segments))
+
+            logger.success(
+                f"Pyannote diarization complete: {num_unique} speakers, {len(merged_segments)} segments"
+            )
+            return DiarizationResult(
+                segments=merged_segments,
+                num_speakers=num_unique,
+                audio_duration=audio_duration,
+                processing_time=time.time() - t_start,
+                sample_rate=sample_rate,
+            )
+        except Exception as e:
+            logger.warning(f"Full pyannote diarization failed: {e}. Falling back to ECAPA+AHC.")
+            return None
+        finally:
+            if tmp_path:
+                Path(tmp_path).unlink(missing_ok=True)
+
     def _energy_vad(
         self, audio: torch.Tensor, frame_duration: float = 0.02, threshold_db: float = -40.0
     ) -> List[tuple]:
-        """Simple energy-based VAD as fallback."""
         frame_samples = int(frame_duration * self.SAMPLE_RATE)
         audio_np = audio.numpy()
         frames = [
@@ -206,9 +320,6 @@ class DiarizationPipeline:
         sample_rate: int = None,
         num_speakers: Optional[int] = None,
     ) -> DiarizationResult:
-        """Run full diarization pipeline on audio."""
-        import time
-
         t_start = time.time()
 
         if isinstance(audio, (str, Path)):
@@ -231,6 +342,18 @@ class DiarizationPipeline:
                 processing_time=time.time() - t_start,
                 sample_rate=sample_rate,
             )
+
+        k = num_speakers or self.num_speakers
+
+        pyannote_result = self._run_full_pyannote(
+            audio=audio,
+            sample_rate=sample_rate,
+            num_speakers=k,
+            audio_duration=audio_duration,
+            t_start=t_start,
+        )
+        if pyannote_result is not None:
+            return pyannote_result
 
         processed = self.embedder.preprocess_audio(audio_tensor, sample_rate)
 
@@ -262,10 +385,10 @@ class DiarizationPipeline:
                 sample_rate=sample_rate,
             )
 
-        k = num_speakers or self.num_speakers
         labels = self.clusterer.cluster(embeddings, num_speakers=k)
-
-        merged = self.clusterer.merge_consecutive_same_speaker(valid_windows, labels)
+        merged = self.clusterer.merge_consecutive_same_speaker(
+            valid_windows, labels, gap_tolerance=0.45
+        )
 
         speaker_names = {i: f"SPEAKER_{i:02d}" for i in range(self.max_speakers)}
         segments = [
@@ -277,7 +400,7 @@ class DiarizationPipeline:
         processing_time = time.time() - t_start
 
         logger.success(
-            f"Diarization complete: {num_unique} speakers, "
+            f"Fallback diarization complete: {num_unique} speakers, "
             f"{len(segments)} segments, {processing_time:.2f}s"
         )
 
@@ -288,4 +411,3 @@ class DiarizationPipeline:
             processing_time=processing_time,
             sample_rate=sample_rate,
         )
-

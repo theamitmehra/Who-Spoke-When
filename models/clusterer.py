@@ -20,7 +20,7 @@ class SpeakerClusterer:
     def __init__(
         self,
         linkage_method: str = "average",
-        distance_threshold: float = 0.7,
+        distance_threshold: float = 0.55,
         min_speakers: int = 1,
         max_speakers: int = 10,
     ):
@@ -39,7 +39,7 @@ class SpeakerClusterer:
         if n <= 2:
             return n
 
-        best_k = self.min_speakers
+        best_k = max(2, self.min_speakers)
         best_score = -1.0
         upper_k = min(self.max_speakers, n - 1)
 
@@ -55,8 +55,24 @@ class SpeakerClusterer:
             except Exception:
                 continue
 
-        logger.info(f"Optimal speaker count: {best_k} (silhouette={best_score:.4f})")
-        return best_k
+        threshold_labels = fcluster(
+            linkage_matrix,
+            t=self.distance_threshold,
+            criterion="distance",
+        )
+        k_threshold = len(np.unique(threshold_labels))
+        k_threshold = int(np.clip(k_threshold, self.min_speakers, min(self.max_speakers, n)))
+
+        if best_score < 0.08:
+            chosen_k = k_threshold
+        else:
+            chosen_k = max(best_k, k_threshold)
+
+        logger.info(
+            f"Optimal speaker count: {chosen_k} "
+            f"(silhouette_k={best_k}, silhouette={best_score:.4f}, threshold_k={k_threshold})"
+        )
+        return chosen_k
 
     def cluster(
         self,
