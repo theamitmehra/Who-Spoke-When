@@ -39,11 +39,13 @@ class SpeakerClusterer:
         if n <= 2:
             return n
 
-        best_k = max(2, self.min_speakers)
-        best_score = -1.0
+        min_k = max(2, self.min_speakers)
         upper_k = min(self.max_speakers, n - 1)
 
-        for k in range(max(2, self.min_speakers), upper_k + 1):
+        best_k = min_k
+        best_score = -1.0
+
+        for k in range(min_k, upper_k + 1):
             labels = fcluster(linkage_matrix, k, criterion="maxclust")
             if len(np.unique(labels)) < 2:
                 continue
@@ -63,10 +65,13 @@ class SpeakerClusterer:
         k_threshold = len(np.unique(threshold_labels))
         k_threshold = int(np.clip(k_threshold, self.min_speakers, min(self.max_speakers, n)))
 
+        # Be conservative to avoid severe over-segmentation in open-domain audio.
         if best_score < 0.08:
             chosen_k = k_threshold
         else:
-            chosen_k = max(best_k, k_threshold)
+            chosen_k = min(best_k, k_threshold) if k_threshold >= 2 else best_k
+
+        chosen_k = int(np.clip(chosen_k, self.min_speakers, min(self.max_speakers, n)))
 
         logger.info(
             f"Optimal speaker count: {chosen_k} "

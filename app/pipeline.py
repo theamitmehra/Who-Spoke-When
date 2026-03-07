@@ -73,7 +73,7 @@ class DiarizationPipeline:
         pyannote_diarization_model: str = "pyannote/speaker-diarization-3.1",
         hf_token: Optional[str] = None,
         num_speakers: Optional[int] = None,
-        max_speakers: int = 10,
+        max_speakers: int = 6,
         cache_dir: str = "./model_cache",
     ):
         self.device = self._resolve_device(device)
@@ -411,3 +411,4 @@ class DiarizationPipeline:
             processing_time=processing_time,
             sample_rate=sample_rate,
         )
+

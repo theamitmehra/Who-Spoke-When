@@ -74,7 +74,7 @@ def get_pipeline():
             use_pyannote_diarization=os.getenv("USE_PYANNOTE_DIARIZATION", "true").lower() in {"1", "true", "yes"},
             pyannote_diarization_model=os.getenv("PYANNOTE_DIARIZATION_MODEL", "pyannote/speaker-diarization-3.1"),
             hf_token=os.getenv("HF_TOKEN"),
-            max_speakers=10,
+            max_speakers=int(os.getenv("MAX_SPEAKERS", "6")),
             cache_dir=cache_dir,
         )
     return _pipeline
@@ -285,5 +285,6 @@ async def debug():
 static_dir = Path(__file__).resolve().parent.parent / "static"
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
 
 
