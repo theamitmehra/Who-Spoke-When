@@ -1,4 +1,13 @@
-﻿
+---
+title: Who Spoke When
+emoji: 🎙️
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_file: app/main.py
+pinned: false
+---
+
 # Who Spoke When
 Speaker diarization service and web app: upload audio and get **who spoke when** segments.
 
